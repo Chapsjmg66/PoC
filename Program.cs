@@ -1,53 +1,101 @@
 ﻿using System;
+using System.Threading.Tasks;
 
-using Newtonsoft.Json;
+using Quartz;
+using Quartz.Impl;
+using Quartz.Logging;
 
-namespace ProofOfConcept
+namespace QuartzSampleApp
 {
-    class Program
+    public class Program
     {
-        static void Main(string[] args)
+        private static async Task Main(string[] args)
         {
-            Console.WriteLine("Hello World!");
-            var json = @"{ 'NewDefinitions' : true}";
+            LogProvider.SetCurrentLogProvider(new ConsoleLogProvider());
 
-            //json = "";
+            // Grab the Scheduler instance from the Factory
+            StdSchedulerFactory factory = new StdSchedulerFactory();
+            IScheduler scheduler = await factory.GetScheduler();
 
-            int test = 1;
-            int test2 = 12;
-            int test3 = 123;
+            var retry = 3;
+            var loop = 1;
 
-            var dt = DateTime.Now.ToShortTimeString();
-            dt = DateTime.Now.ToLongTimeString();
-            string idx = test.ToString("D3");
-            idx = test2.ToString("D3");
-            idx = test3.ToString("D3");
 
-            var hb = new Heartbeat();
-            hb = JsonConvert.DeserializeObject<Heartbeat>(json);
-            try
+
+            // and start it off
+            await scheduler.Start();
+
+            // define the job and tie it to our HelloJob class
+            IJobDetail job = JobBuilder.Create<HelloJob>()
+                .WithIdentity("job1", "group1")
+                .UsingJobData("retry", retry)
+                .UsingJobData ("loop", loop)
+                .Build();
+
+            // Trigger the job to run now, and then repeat every 10 seconds
+            ITrigger trigger = TriggerBuilder.Create()
+                .WithIdentity("trigger1", "group1")
+                .StartNow()
+                .WithSimpleSchedule(x => x
+                    .WithIntervalInSeconds(10)
+                    .RepeatForever())
+                .Build();
+
+            // Tell quartz to schedule the job using our trigger
+            await scheduler.ScheduleJob(job, trigger);
+
+            // some sleep to show what's happening
+            await Task.Delay(TimeSpan.FromSeconds(60));
+
+            // and last shut down the scheduler when you are ready to close your program
+            await scheduler.Shutdown();
+
+            Console.WriteLine("Press any key to close the application");
+            Console.ReadKey();
+        }
+
+        // simple log provider to get something to the console
+        private class ConsoleLogProvider : ILogProvider
+        {
+            public Logger GetLogger(string name)
             {
-                if (hb.NewDefinitions)
+                return (level, func, exception, parameters) =>
                 {
-                    Console.Out.WriteLine("TRUE");
-                }
-                else
-                {
-                    Console.Out.WriteLine("Others");
-                }
+                    if (level >= LogLevel.Info && func != null)
+                    {
+                        Console.WriteLine("[" + DateTime.Now.ToLongTimeString() + "] [" + level + "] " + func(), parameters);
+                    }
+                    return true;
+                };
             }
-            catch( Exception ex)
+
+            public IDisposable OpenNestedContext(string message)
             {
-                Console.Out.WriteLine("Ooops");
-                Console.Out.WriteLine(ex.ToString());
+                throw new NotImplementedException();
             }
 
-
+            public IDisposable OpenMappedContext(string key, object value, bool destructure = false)
+            {
+                throw new NotImplementedException();
+            }
         }
     }
 
-    public class Heartbeat
+
+    [PersistJobDataAfterExecution]
+    public class HelloJob : IJob
     {
-        public bool NewDefinitions { get; set; }
+        public async Task Execute(IJobExecutionContext context)
+        {
+            var jobData = context.JobDetail.JobDataMap;
+
+            var retry = jobData.GetInt("retry");
+            var loop = jobData.GetInt("loop");
+
+            await Console.Out.WriteLineAsync("Greetings from HelloJob!" + " retry=" + retry + " loop=" + loop );
+
+            loop = loop + 1;
+            jobData.Put("loop",loop);
+        }
     }
 }
